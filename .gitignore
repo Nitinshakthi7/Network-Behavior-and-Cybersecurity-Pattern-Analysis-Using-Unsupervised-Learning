@@ -1,0 +1,22 @@
+# Dataset — too large for GitHub (download separately)
+data/*.csv
+data/*.pcap
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# VS Code settings
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
