@@ -1,147 +1,206 @@
-import os
+"""
+main.py
+-------
+Entry point for the Unsupervised Behavioral Network Traffic Analysis Framework.
+
+Pipeline order:
+    1. Setup — logging, output directories
+    2. Load data
+    3. Feature engineering (configurable)
+    4. Preprocessing — label separation, encoding, scaling
+    5. K-Means clustering — K selection via silhouette search
+    6. K-Means evaluation — centroid analysis, cluster distribution
+    7. DBSCAN clustering
+    8. DBSCAN evaluation
+    9. Visualization — 4 plots saved to outputs/plots/
+   10. Reporting — text report + CSV saved to outputs/reports/
+"""
+
+import config
+from src.utils import setup_logger, ensure_dirs, timer
 from src.preprocessing import load_data, preprocess
-from src.clustering import find_best_k, run_dbscan, evaluate_dbscan
-from src.evaluation import cluster_distribution, print_centroid_analysis
+from src.feature_engineering import apply_feature_engineering
+from src.clustering.kmeans import run_kmeans_search
+from src.clustering.dbscan import run_dbscan
+from src.clustering.evaluation import (
+    cluster_distribution,
+    cluster_summary_stats,
+    print_centroids,
+)
 from src.visualization import (
     plot_silhouette_vs_k,
     plot_kmeans_cluster_sizes,
     plot_dbscan_summary,
-    plot_kmeans_scatter,
+    plot_2d_scatter,
 )
+from src.reporting import generate_text_report, export_cluster_summary_csv
 
-# ──────────────────────────────────────────────
-#  CONFIGURATION
-# ──────────────────────────────────────────────
+import os
 
-DATA_PATH = os.path.join("data", "UNSW_NB15_training-set.csv")
-
-# Label columns — kept aside for evaluation only, not used in training
-LABEL_COLS = ["label", "attack_cat"]
-
-# K-Means: range of K values to try
-K_RANGE = range(2, 9)
-
-# DBSCAN: parameters
-DBSCAN_EPS = 1.5
-DBSCAN_MIN_SAMPLES = 10
-
-# Scatter plot: which two features to use for 2D visualization
-# These indices refer to columns in the scaled feature matrix after preprocessing
-# sbytes (index 7) = total bytes sent from source
-# dbytes (index 8) = total bytes sent from destination
-# These two features meaningfully show traffic volume differences between clusters
-SCATTER_FEAT_1 = 7   # sbytes — source bytes
-SCATTER_FEAT_2 = 8   # dbytes — destination bytes
-
-# Optional: save plots to disk (set to None to just display)
-PLOTS_DIR = "plots"
-
-
-# ──────────────────────────────────────────────
-#  MAIN PIPELINE
-# ──────────────────────────────────────────────
 
 def main():
 
-    # Create plots folder if saving
-    if PLOTS_DIR:
-        os.makedirs(PLOTS_DIR, exist_ok=True)
+    # ── Setup ─────────────────────────────────────────────────────────────────
+    logger = setup_logger("framework")
+    ensure_dirs(config.PLOTS_DIR, config.MODELS_DIR, config.REPORTS_DIR)
+    logger.info("Framework initialised.")
+    logger.info(f"Output directories: {config.OUTPUTS_DIR}/")
 
-    # ── STEP 1: Load and Preprocess Data ─────────────────────────────────
-    print("=" * 55)
-    print("  STEP 1: Loading and Preprocessing Data")
-    print("=" * 55)
+    # ── Step 1: Load Data ─────────────────────────────────────────────────────
+    logger.info("=" * 55)
+    logger.info("STEP 1 — Loading Dataset")
+    logger.info("=" * 55)
 
-    df = load_data(DATA_PATH)
-    X, labels_df, feature_names = preprocess(df, label_cols=LABEL_COLS)
+    df = load_data(config.DATA_PATH)
+    logger.info(f"Dataset loaded: {df.shape[0]:,} rows, {df.shape[1]} columns")
 
-    print(f"[INFO] Features used for clustering: {len(feature_names)}")
+    # ── Step 2: Feature Engineering ───────────────────────────────────────────
+    logger.info("=" * 55)
+    logger.info("STEP 2 — Feature Engineering")
+    logger.info("=" * 55)
 
-    # ── STEP 2: K-Means Clustering ────────────────────────────────────────
-    print("\n" + "=" * 55)
-    print("  STEP 2: K-Means Clustering")
-    print("=" * 55)
+    if config.FEATURE_ENGINEERING_ENABLED:
+        df = apply_feature_engineering(df)
+        logger.info("Engineered features added: outbound_dominance_ratio, "
+                    "packet_rate, bytes_per_packet, packet_asymmetry")
+    else:
+        logger.info("Feature engineering disabled (FEATURE_ENGINEERING_ENABLED=False)")
 
-    best_k, km_labels, km_scores = find_best_k(X, K_RANGE)
-    cluster_distribution(km_labels, title=f"K-Means (K={best_k})")
+    # ── Step 3: Preprocessing ─────────────────────────────────────────────────
+    logger.info("=" * 55)
+    logger.info("STEP 3 — Preprocessing")
+    logger.info("=" * 55)
 
-    # ── Centroid Analysis ──────────────────────────────────────────────────
-    # Run K-Means once more with best_k to get the fitted model object
-    from src.clustering import run_kmeans
-    _, km_model = run_kmeans(X, best_k)
-    print_centroid_analysis(km_model, feature_names, top_n=5)
+    X, labels_df, feature_names, scaler = preprocess(df, label_cols=config.LABEL_COLS)
+    total_records = len(X)
+    logger.info(f"Labels separated: {config.LABEL_COLS}")
+    logger.info(f"Features after preprocessing: {len(feature_names)}")
+    logger.info(f"Feature matrix shape: {X.shape}")
 
-    # ── STEP 3: DBSCAN Clustering ─────────────────────────────────────────
-    print("\n" + "=" * 55)
-    print("  STEP 3: DBSCAN Clustering")
-    print("=" * 55)
+    # ── Step 4: K-Means Clustering ────────────────────────────────────────────
+    logger.info("=" * 55)
+    logger.info("STEP 4 — K-Means Clustering")
+    logger.info("=" * 55)
 
-    db_labels, db_model = run_dbscan(X, eps=DBSCAN_EPS, min_samples=DBSCAN_MIN_SAMPLES)
-    evaluate_dbscan(X, db_labels, eps=DBSCAN_EPS, min_samples=DBSCAN_MIN_SAMPLES)
-    cluster_distribution(db_labels, title="DBSCAN")
+    k_range = range(config.KMEANS_K_MIN, config.KMEANS_K_MAX + 1)
+    logger.info(f"Testing K values: {list(k_range)}")
+    logger.info(f"Silhouette sample size: {config.KMEANS_SILHOUETTE_SAMPLE_SIZE:,}")
 
-    # ── DBSCAN Parameter Interpretation ───────────────────────────────────
-    print(f"""
-[DBSCAN Interpretation]
-  eps={DBSCAN_EPS} means two points must be within distance {DBSCAN_EPS} (in scaled space)
-  to be considered neighbours.
+    km_result = run_kmeans_search(
+        X,
+        k_range=k_range,
+        sample_size=config.KMEANS_SILHOUETTE_SAMPLE_SIZE,
+        random_state=config.RANDOM_STATE,
+    )
 
-  min_samples={DBSCAN_MIN_SAMPLES} means a point needs at least {DBSCAN_MIN_SAMPLES} neighbours
-  within eps to be classified as a core point.
+    best_k = km_result["best_k"]
+    logger.info(f"Best K selected: {best_k}  |  "
+                f"Silhouette Score: {km_result['scores'][best_k]:.4f}")
 
-  Why 107 clusters formed:
-    The dataset has many small, tight groups of network sessions with very
-    similar feature values (e.g. same protocol, same packet size pattern).
-    With eps=1.5, DBSCAN treats each such dense micro-group as its own cluster.
-    Increasing eps (e.g. to 2.5 or 3.0) would merge nearby clusters,
-    producing fewer, broader clusters.
-    Increasing min_samples (e.g. to 50) would force clusters to be larger,
-    pushing more points into the noise category.
+    # ── Step 5: K-Means Evaluation ────────────────────────────────────────────
+    logger.info("=" * 55)
+    logger.info("STEP 5 — K-Means Evaluation")
+    logger.info("=" * 55)
 
-  Noise points ({int((db_labels == -1).sum())} total):
-    These are records that do not belong to any dense region.
-    In a cybersecurity context these are the most suspicious sessions —
-    they represent rare or anomalous traffic patterns.
-    """.strip())
+    dist_km = cluster_distribution(km_result["labels"])
+    logger.info("Cluster distribution:")
+    for label, count in dist_km.items():
+        pct = (count / total_records) * 100
+        logger.info(f"  Cluster {label:>3}: {count:>7,} sessions ({pct:.2f}%)")
 
-    # ── STEP 4: Visualizations ────────────────────────────────────────────
-    print("\n" + "=" * 55)
-    print("  STEP 4: Generating Visualizations")
-    print("=" * 55)
+    print_centroids(km_result["centroids"], feature_names, top_n=5)
 
-    # Plot 1 – Silhouette Score vs K
+    km_summary = cluster_summary_stats(X, km_result["labels"], feature_names)
+
+    # ── Step 6: DBSCAN Clustering ─────────────────────────────────────────────
+    logger.info("=" * 55)
+    logger.info("STEP 6 — DBSCAN Clustering")
+    logger.info("=" * 55)
+
+    logger.info(f"DBSCAN parameters: eps={config.DBSCAN_EPS}, "
+                f"min_samples={config.DBSCAN_MIN_SAMPLES}")
+
+    db_result = run_dbscan(X, eps=config.DBSCAN_EPS,
+                            min_samples=config.DBSCAN_MIN_SAMPLES)
+
+    logger.info(f"Clusters found : {db_result['n_clusters']}")
+    logger.info(f"Noise points   : {db_result['n_noise']:,} "
+                f"({db_result['noise_pct']:.2f}% of data)")
+
+    dist_db = cluster_distribution(db_result["labels"])
+    logger.info(f"DBSCAN cluster labels: {len(dist_db)} groups (including noise at -1)")
+
+    # ── Step 7: Visualization ─────────────────────────────────────────────────
+    logger.info("=" * 55)
+    logger.info("STEP 7 — Generating Visualizations")
+    logger.info("=" * 55)
+
     plot_silhouette_vs_k(
-        km_scores,
-        best_k,
-        save_path=os.path.join(PLOTS_DIR, "silhouette_vs_k.png") if PLOTS_DIR else None
+        scores=km_result["scores"],
+        best_k=best_k,
+        save_path=os.path.join(config.PLOTS_DIR, "silhouette_vs_k.png"),
     )
+    logger.info("Saved: silhouette_vs_k.png")
 
-    # Plot 2 – K-Means Cluster Size Distribution
     plot_kmeans_cluster_sizes(
-        km_labels,
-        best_k,
-        save_path=os.path.join(PLOTS_DIR, "kmeans_cluster_sizes.png") if PLOTS_DIR else None
+        labels=km_result["labels"],
+        best_k=best_k,
+        total=total_records,
+        save_path=os.path.join(config.PLOTS_DIR, "kmeans_cluster_sizes.png"),
     )
+    logger.info("Saved: kmeans_cluster_sizes.png")
 
-    # Plot 3 – DBSCAN Summary
     plot_dbscan_summary(
-        db_labels,
-        save_path=os.path.join(PLOTS_DIR, "dbscan_summary.png") if PLOTS_DIR else None
+        db_result=db_result,
+        total=total_records,
+        save_path=os.path.join(config.PLOTS_DIR, "dbscan_summary.png"),
     )
+    logger.info("Saved: dbscan_summary.png")
 
-    # Plot 4 – K-Means 2D Scatter (sampled)
-    plot_kmeans_scatter(
-        X, km_labels, feature_names, best_k,
-        feat_idx_1=SCATTER_FEAT_1,
-        feat_idx_2=SCATTER_FEAT_2,
-        save_path=os.path.join(PLOTS_DIR, "kmeans_scatter.png") if PLOTS_DIR else None
+    plot_2d_scatter(
+        X=X,
+        labels=km_result["labels"],
+        feature_names=feature_names,
+        best_k=best_k,
+        feat_x=config.SCATTER_FEAT_X,
+        feat_y=config.SCATTER_FEAT_Y,
+        sample_size=config.SCATTER_SAMPLE_SIZE,
+        save_path=os.path.join(config.PLOTS_DIR, "kmeans_scatter.png"),
     )
+    logger.info("Saved: kmeans_scatter.png")
 
-    # ── STEP 5: (Placeholder — Anomaly Detection to be added after learning) ──
+    # ── Step 8: Reporting ─────────────────────────────────────────────────────
+    logger.info("=" * 55)
+    logger.info("STEP 8 — Generating Reports")
+    logger.info("=" * 55)
 
-    print("\n" + "=" * 55)
-    print("  Pipeline complete.")
-    print("=" * 55)
+    report_path = os.path.join(config.REPORTS_DIR, "summary.txt")
+    generate_text_report(
+        km_result=km_result,
+        db_result=db_result,
+        feature_names=feature_names,
+        total_records=total_records,
+        rare_threshold=config.RARE_CLUSTER_THRESHOLD,
+        save_path=report_path,
+    )
+    logger.info(f"Saved: {report_path}")
+
+    csv_path = os.path.join(config.REPORTS_DIR, "cluster_summary.csv")
+    export_cluster_summary_csv(km_summary, save_path=csv_path)
+    logger.info(f"Saved: {csv_path}")
+
+    # ── Done ──────────────────────────────────────────────────────────────────
+    logger.info("=" * 55)
+    logger.info("Framework pipeline complete.")
+    logger.info(f"All outputs written to: {config.OUTPUTS_DIR}/")
+    logger.info("=" * 55)
+
+    # ── Future modules (placeholder) ──────────────────────────────────────────
+    # When ready, add the following steps here:
+    #   from src.anomaly.isolation_forest import run_isolation_forest
+    #   from src.association.apriori import run_apriori
+    #   from src.recommendation.policy import suggest_rules
+    #   from src.search.query import run_query
 
 
 if __name__ == "__main__":

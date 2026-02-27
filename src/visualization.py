@@ -1,182 +1,215 @@
+"""
+visualization.py
+----------------
+All plot generation for the clustering pipeline.
+
+Plots are saved to the path specified in config.PLOTS_DIR.
+All plots use a consistent dark-themed professional style.
+Sampling is applied for scatter plots to avoid rendering lag on large datasets.
+"""
+
+import os
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import seaborn as sns
 
-# ── Global style ─────────────────────────────────────────────────────────────
-sns.set_theme(style="whitegrid", palette="muted")
-SAMPLE_SIZE = 10_000   # rows used for scatter / silhouette plots
+sns.set_theme(style="darkgrid", palette="muted")
+
+_ACCENT  = "#00B4D8"
+_YELLOW  = "#FFD166"
+_RED     = "#EF476F"
+_BG      = "#0D1B2A"
+_TEXT    = "#CAEEFF"
 
 
-# ── 1. Silhouette Score vs K ──────────────────────────────────────────────────
+def _apply_dark_bg(fig, ax):
+    fig.patch.set_facecolor(_BG)
+    ax.set_facecolor("#1A2D42")
+    ax.tick_params(colors=_TEXT)
+    ax.xaxis.label.set_color(_TEXT)
+    ax.yaxis.label.set_color(_TEXT)
+    ax.title.set_color(_TEXT)
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#2A4060")
 
-def plot_silhouette_vs_k(km_scores: dict, best_k: int, save_path: str = None):
+
+def plot_silhouette_vs_k(scores: dict, best_k: int, save_path: str) -> None:
     """
-    Line plot of Silhouette Score for each K value tested in K-Means.
+    Line plot of Silhouette Score vs K.
+
+    Business context title: shows how cluster separation quality
+    varies with the number of behavioral groups.
 
     Parameters:
-        km_scores : {k: silhouette_score} dict from find_best_k()
-        best_k    : K selected as best
-        save_path : Optional file path to save the figure
+        scores    : {k: silhouette_score} dict
+        best_k    : K with the highest score (highlighted)
+        save_path : Full file path to save the figure
     """
-    k_values = list(km_scores.keys())
-    scores   = list(km_scores.values())
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-
-    ax.plot(k_values, scores, marker="o", linewidth=2,
-            color="#4C72B0", markerfacecolor="white", markeredgewidth=2, markersize=8)
-
-    # Highlight best K
-    best_score = km_scores[best_k]
-    ax.scatter([best_k], [best_score], color="#DD8452", s=120, zorder=5,
-               label=f"Best K = {best_k}  (score = {best_score:.4f})")
-
-    ax.set_title("K-Means: Silhouette Score vs Number of Clusters (K)",
-                 fontsize=13, fontweight="bold", pad=12)
-    ax.set_xlabel("Number of Clusters (K)", fontsize=11)
-    ax.set_ylabel("Silhouette Score", fontsize=11)
-    ax.set_xticks(k_values)
-    ax.legend(fontsize=10)
-    ax.set_ylim(0, max(scores) + 0.05)
-
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=150)
-        print(f"[INFO] Saved: {save_path}")
-    plt.show()
-
-
-# ── 2. K-Means Cluster Size Distribution ─────────────────────────────────────
-
-def plot_kmeans_cluster_sizes(km_labels: np.ndarray, best_k: int, save_path: str = None):
-    """
-    Bar chart showing how many data points fall in each K-Means cluster.
-
-    Parameters:
-        km_labels : Cluster label array from K-Means
-        best_k    : Best K (used in title)
-        save_path : Optional file path to save the figure
-    """
-    unique, counts = np.unique(km_labels, return_counts=True)
+    k_vals  = list(scores.keys())
+    s_vals  = list(scores.values())
+    best_sc = scores[best_k]
 
     fig, ax = plt.subplots(figsize=(9, 5))
+    _apply_dark_bg(fig, ax)
 
-    bars = ax.bar(unique, counts, color=sns.color_palette("muted", len(unique)),
-                  edgecolor="white", linewidth=0.8)
+    ax.plot(k_vals, s_vals, marker="o", linewidth=2.2, color=_ACCENT,
+            markerfacecolor="white", markeredgewidth=2, markersize=9)
+    ax.scatter([best_k], [best_sc], s=140, color=_YELLOW, zorder=5,
+               label=f"Best K = {best_k}  (score = {best_sc:.4f})")
 
-    # Annotate each bar with count
-    for bar, count in zip(bars, counts):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 200,
-                f"{count:,}", ha="center", va="bottom", fontsize=9, color="#333333")
+    ax.set_title("Silhouette Score vs Number of Clusters (K)\n"
+                 "Network Traffic Behavioral Segmentation Quality",
+                 fontsize=12, fontweight="bold", pad=10, color=_TEXT)
+    ax.set_xlabel("Number of Clusters (K)", fontsize=10)
+    ax.set_ylabel("Silhouette Score", fontsize=10)
+    ax.set_xticks(k_vals)
+    ax.legend(fontsize=9, facecolor=_BG, labelcolor=_TEXT)
+    ax.set_ylim(0, max(s_vals) + 0.05)
 
-    ax.set_title(f"K-Means Cluster Size Distribution  (K = {best_k})",
-                 fontsize=13, fontweight="bold", pad=12)
-    ax.set_xlabel("Cluster Label", fontsize=11)
-    ax.set_ylabel("Number of Points", fontsize=11)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, facecolor=_BG)
+    plt.show()
+    plt.close()
+
+
+def plot_kmeans_cluster_sizes(labels: np.ndarray, best_k: int,
+                              total: int, save_path: str) -> None:
+    """
+    Bar chart of K-Means cluster sizes with % of total traffic annotated.
+
+    Parameters:
+        labels    : K-Means cluster label array
+        best_k    : K used (for title)
+        total     : Total dataset record count (for % calculation)
+        save_path : Full file path to save the figure
+    """
+    unique, counts = np.unique(labels, return_counts=True)
+    pcts = (counts / total) * 100
+    colors = sns.color_palette("muted", len(unique))
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    _apply_dark_bg(fig, ax)
+
+    bars = ax.bar(unique, counts, color=colors, edgecolor="white", linewidth=0.7)
+    for bar, count, pct in zip(bars, counts, pcts):
+        ax.text(bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + total * 0.003,
+                f"{count:,}\n({pct:.1f}%)",
+                ha="center", va="bottom", fontsize=8.5, color=_TEXT)
+
+    ax.set_title(f"K-Means Cluster Size Distribution  (K = {best_k})\n"
+                 "Traffic Volume per Behavioral Segment",
+                 fontsize=12, fontweight="bold", pad=10, color=_TEXT)
+    ax.set_xlabel("Cluster Label", fontsize=10)
+    ax.set_ylabel("Number of Sessions", fontsize=10)
     ax.set_xticks(unique)
 
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=150)
-        print(f"[INFO] Saved: {save_path}")
+    plt.savefig(save_path, dpi=150, facecolor=_BG)
     plt.show()
+    plt.close()
 
 
-# ── 3. DBSCAN Summary Bar Chart ───────────────────────────────────────────────
-
-def plot_dbscan_summary(db_labels: np.ndarray, save_path: str = None):
+def plot_dbscan_summary(db_result: dict, total: int, save_path: str) -> None:
     """
     Bar chart summarising DBSCAN output:
-      - Total meaningful clusters found
-      - Total noise points flagged
-
-    Does NOT plot each cluster individually.
+        - Number of clusters discovered
+        - Noise points (potential anomalies)
+        - Clustered points (assigned to a group)
 
     Parameters:
-        db_labels : Cluster label array from DBSCAN (-1 = noise)
-        save_path : Optional file path to save the figure
+        db_result : Result dict from run_dbscan()
+        total     : Total dataset record count
+        save_path : Full file path to save the figure
     """
-    n_clusters = len(set(db_labels) - {-1})
-    n_noise    = int(np.sum(db_labels == -1))
-    n_clustered = len(db_labels) - n_noise
+    n_clusters  = db_result["n_clusters"]
+    n_noise     = db_result["n_noise"]
+    n_clustered = total - n_noise
 
-    categories = ["Clusters Found", "Noise Points", "Clustered Points"]
-    values     = [n_clusters, n_noise, n_clustered]
-    colors     = ["#4C72B0", "#C44E52", "#55A868"]
+    cats   = ["Clusters\nDiscovered", "Noise Points\n(Potential Anomalies)", "Clustered\nSessions"]
+    vals   = [n_clusters, n_noise, n_clustered]
+    colors = [_ACCENT, _RED, "#55A868"]
 
-    fig, ax = plt.subplots(figsize=(7, 5))
+    fig, ax = plt.subplots(figsize=(8, 5))
+    _apply_dark_bg(fig, ax)
 
-    bars = ax.bar(categories, values, color=colors, edgecolor="white", linewidth=0.8)
+    bars = ax.bar(cats, vals, color=colors, edgecolor="white", linewidth=0.7)
+    for bar, val in zip(bars, vals):
+        ax.text(bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + max(vals) * 0.01,
+                f"{val:,}", ha="center", va="bottom",
+                fontsize=11, fontweight="bold", color=_TEXT)
 
-    for bar, val in zip(bars, values):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(values) * 0.01,
-                f"{val:,}", ha="center", va="bottom", fontsize=10, fontweight="bold")
+    ax.set_title("DBSCAN Density-Based Clustering Summary\n"
+                 "Cluster Discovery and Noise (Anomaly Candidate) Analysis",
+                 fontsize=12, fontweight="bold", pad=10, color=_TEXT)
+    ax.set_ylabel("Count", fontsize=10)
+    ax.set_ylim(0, max(vals) * 1.15)
 
-    ax.set_title("DBSCAN Clustering Summary", fontsize=13, fontweight="bold", pad=12)
-    ax.set_ylabel("Count", fontsize=11)
-    ax.set_ylim(0, max(values) * 1.15)
-
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=150)
-        print(f"[INFO] Saved: {save_path}")
+    plt.savefig(save_path, dpi=150, facecolor=_BG)
     plt.show()
+    plt.close()
 
 
-# ── 4. 2D Scatter Plot — K-Means Clusters ────────────────────────────────────
-
-def plot_kmeans_scatter(X: np.ndarray, km_labels: np.ndarray,
-                        feature_names: list, best_k: int,
-                        feat_idx_1: int = 0, feat_idx_2: int = 1,
-                        save_path: str = None):
+def plot_2d_scatter(X: np.ndarray, labels: np.ndarray,
+                    feature_names: list, best_k: int,
+                    feat_x: str, feat_y: str,
+                    sample_size: int, save_path: str) -> None:
     """
-    2D scatter plot of K-Means clusters using two selected features.
-    Uses a random sample to avoid freezing on large datasets.
+    2D scatter projection of K-Means clusters using two selected features.
+    A random sample is used to prevent rendering lag on large datasets.
 
     Parameters:
-        X            : Scaled feature matrix (numpy array)
-        km_labels    : K-Means cluster label array
-        feature_names: List of feature column names
-        best_k       : Best K (used in title)
-        feat_idx_1   : Column index for X-axis feature
-        feat_idx_2   : Column index for Y-axis feature
-        save_path    : Optional file path to save the figure
+        X             : Scaled feature matrix
+        labels        : K-Means label array
+        feature_names : Column names matching X
+        best_k        : Number of clusters (for title)
+        feat_x        : Feature name for X-axis
+        feat_y        : Feature name for Y-axis
+        sample_size   : Max rows to plot
+        save_path     : Full file path to save the figure
     """
-    # Sample for performance
-    n = len(X)
-    sample_idx = np.random.default_rng(42).choice(n, size=min(SAMPLE_SIZE, n), replace=False)
+    if feat_x not in feature_names or feat_y not in feature_names:
+        print(f"[WARN] Scatter feature '{feat_x}' or '{feat_y}' not found. Skipping scatter plot.")
+        return
 
-    X_sample      = X[sample_idx]
-    labels_sample = km_labels[sample_idx]
+    xi = feature_names.index(feat_x)
+    yi = feature_names.index(feat_y)
 
-    x_vals = X_sample[:, feat_idx_1]
-    y_vals = X_sample[:, feat_idx_2]
+    rng = np.random.default_rng(42)
+    idx = rng.choice(len(X), size=min(sample_size, len(X)), replace=False)
+    Xs  = X[idx, xi]
+    Ys  = X[idx, yi]
+    Ls  = labels[idx]
 
-    x_name = feature_names[feat_idx_1] if feature_names else f"Feature {feat_idx_1}"
-    y_name = feature_names[feat_idx_2] if feature_names else f"Feature {feat_idx_2}"
+    palette  = sns.color_palette("tab10", best_k)
+    c_map    = {lbl: palette[i % len(palette)] for i, lbl in enumerate(sorted(set(Ls)))}
+    pt_colors = [c_map[l] for l in Ls]
 
-    palette = sns.color_palette("tab10", best_k)
-    color_map = {label: palette[i % len(palette)] for i, label in enumerate(sorted(set(labels_sample)))}
-    point_colors = [color_map[l] for l in labels_sample]
+    fig, ax = plt.subplots(figsize=(10, 6))
+    _apply_dark_bg(fig, ax)
 
-    fig, ax = plt.subplots(figsize=(9, 6))
+    ax.scatter(Xs, Ys, c=pt_colors, s=7, alpha=0.45, linewidths=0)
 
-    ax.scatter(x_vals, y_vals, c=point_colors, s=8, alpha=0.5, linewidths=0)
-
-    # Legend patches
-    patches = [mpatches.Patch(color=palette[i], label=f"Cluster {i}") for i in range(best_k)]
+    patches = [mpatches.Patch(color=palette[i], label=f"Cluster {i}")
+               for i in range(best_k)]
     ax.legend(handles=patches, title="Cluster", bbox_to_anchor=(1.01, 1),
-              loc="upper left", fontsize=8, title_fontsize=9)
+              loc="upper left", fontsize=8, title_fontsize=9,
+              facecolor=_BG, labelcolor=_TEXT)
 
-    ax.set_title(f"K-Means Cluster Scatter  (K={best_k}, sample={SAMPLE_SIZE:,} pts)",
-                 fontsize=13, fontweight="bold", pad=12)
-    ax.set_xlabel(x_name, fontsize=11)
-    ax.set_ylabel(y_name, fontsize=11)
+    ax.set_title(f"K-Means Cluster Projection: {feat_x} vs {feat_y}\n"
+                 f"K={best_k}  |  Sample={sample_size:,} sessions",
+                 fontsize=12, fontweight="bold", pad=10, color=_TEXT)
+    ax.set_xlabel(f"{feat_x}  (standardised)", fontsize=10)
+    ax.set_ylabel(f"{feat_y}  (standardised)", fontsize=10)
 
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=150)
-        print(f"[INFO] Saved: {save_path}")
+    plt.savefig(save_path, dpi=150, facecolor=_BG)
     plt.show()
+    plt.close()

@@ -1,0 +1,67 @@
+=================================================================
+  BEHAVIORAL NETWORK TRAFFIC ANALYSIS — CLUSTERING REPORT
+=================================================================
+
+DATASET SUMMARY
+----------------------------------------
+  Total records        : 175,341
+  Feature count        : 47
+
+K-MEANS CLUSTERING
+----------------------------------------
+  Best K selected      : 10
+  Selection method     : Maximum Silhouette Score
+  Best Silhouette Score: 0.3529
+
+  Silhouette scores per K:
+    K =  2  →  0.3016
+    K =  3  →  0.2716
+    K =  4  →  0.2957
+    K =  5  →  0.2989
+    K =  6  →  0.3183
+    K =  7  →  0.3262
+    K =  8  →  0.3407
+    K =  9  →  0.3493
+    K = 10  →  0.3529 ← selected
+
+  Cluster size distribution:
+    Cluster   0  :    8,698 sessions  ( 4.96%)
+    Cluster   1  :   37,238 sessions  (21.24%)
+    Cluster   2  :   43,891 sessions  (25.03%)
+    Cluster   3  :    1,716 sessions  ( 0.98%)  [RARE — < 1% traffic]
+    Cluster   4  :   35,865 sessions  (20.45%)
+    Cluster   5  :   41,874 sessions  (23.88%)
+    Cluster   6  :       82 sessions  ( 0.05%)  [RARE — < 1% traffic]
+    Cluster   7  :    2,760 sessions  ( 1.57%)
+    Cluster   8  :    2,567 sessions  ( 1.46%)
+    Cluster   9  :      650 sessions  ( 0.37%)  [RARE — < 1% traffic]
+
+  Rare clusters identified: [3, 6, 9]
+  → These clusters warrant further investigation as potential
+    attack signatures or edge-case traffic patterns.
+
+DBSCAN CLUSTERING
+----------------------------------------
+  eps               : 1.5
+  min_samples       : 10
+  Clusters found    : 113
+  Noise points      : 6,983  (3.98% of data)
+
+  Noise point interpretation:
+    Sessions labelled as noise do not belong to any dense
+    behavioral region. In a security context, these are the
+    primary candidates for anomalous or attack traffic.
+
+BEHAVIORAL INTERPRETATION (PLACEHOLDER)
+----------------------------------------
+  Cluster semantic labeling will be completed after cross-
+  referencing cluster assignments with attack_cat labels.
+
+FUTURE MODULES
+----------------------------------------
+  [ ] Anomaly Detection       — Isolation Forest / LOF
+  [ ] Association Rule Mining — Apriori / FP-Growth
+  [ ] Recommender System      — Firewall rule suggestion
+  [ ] Keyword / Query Search  — Interactive cluster filtering
+
+=================================================================

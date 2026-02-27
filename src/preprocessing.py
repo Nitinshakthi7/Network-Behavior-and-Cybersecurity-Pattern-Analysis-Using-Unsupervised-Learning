@@ -1,101 +1,124 @@
+"""
+preprocessing.py
+----------------
+Data loading, cleaning, categorical encoding, and feature scaling.
+
+Pipeline order:
+    load_data → handle_missing → encode_categorical → scale_features
+    (orchestrated by preprocess())
+
+Labels are separated before any feature transformation and are never
+passed to any model. They are returned separately for post-hoc validation.
+"""
+
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 
-def load_data(filepath):
+def load_data(filepath: str) -> pd.DataFrame:
     """
     Load the UNSW-NB15 dataset from a CSV file.
-    Returns a pandas DataFrame.
+
+    Returns:
+        df (DataFrame): Raw dataset
     """
     df = pd.read_csv(filepath)
-    print(f"[INFO] Dataset loaded: {df.shape[0]} rows, {df.shape[1]} columns")
     return df
 
 
-def handle_missing_values(df):
+def handle_missing(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Handle missing values in the dataset.
-    - Numerical columns: fill with column median
-    - Categorical columns: fill with column mode
+    Impute missing values:
+    - Numerical columns → column median (robust to outliers)
+    - Categorical columns → column mode (most frequent value)
     """
-    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    cat_cols = df.select_dtypes(include=["object"]).columns.tolist()
+    num_cols = df.select_dtypes(include=[np.number]).columns
+    cat_cols = df.select_dtypes(include=["object"]).columns
 
     for col in num_cols:
-        if df[col].isnull().sum() > 0:
-            df[col].fillna(df[col].median(), inplace=True)
+        if df[col].isnull().any():
+            df[col] = df[col].fillna(df[col].median())
 
     for col in cat_cols:
-        if df[col].isnull().sum() > 0:
-            df[col].fillna(df[col].mode()[0], inplace=True)
+        if df[col].isnull().any():
+            df[col] = df[col].fillna(df[col].mode()[0])
 
-    print(f"[INFO] Missing values handled. Remaining nulls: {df.isnull().sum().sum()}")
     return df
 
 
-def encode_categorical(df, exclude_cols=None):
+def encode_categorical(df: pd.DataFrame, exclude: list = None) -> pd.DataFrame:
     """
-    Label-encode all categorical (object-type) columns.
-    exclude_cols: list of column names to skip (e.g. label columns)
-    """
-    if exclude_cols is None:
-        exclude_cols = []
+    Label-encode all remaining object-type columns.
 
-    cat_cols = df.select_dtypes(include=["object"]).columns.tolist()
-    cat_cols = [c for c in cat_cols if c not in exclude_cols]
+    Note on encoding choice:
+        Label encoding is used instead of one-hot encoding to avoid
+        dimensionality explosion in a 43-feature dataset. The trade-off
+        (implied ordinality) is accepted for distance-based clustering.
+
+    Parameters:
+        df      : DataFrame
+        exclude : List of column names to skip (e.g. already removed labels)
+    """
+    if exclude is None:
+        exclude = []
+
+    cat_cols = [c for c in df.select_dtypes(include=["object"]).columns
+                if c not in exclude]
 
     le = LabelEncoder()
     for col in cat_cols:
         df[col] = le.fit_transform(df[col].astype(str))
 
-    print(f"[INFO] Encoded categorical columns: {cat_cols}")
-    return df
+    return df, cat_cols
 
 
-def scale_features(X):
+def scale_features(X: np.ndarray) -> tuple:
     """
-    Apply StandardScaler to normalize all feature values.
-    Returns the scaled numpy array and the fitted scaler.
+    Standardise all features to mean=0, std=1 using StandardScaler.
+
+    Critical for K-Means and DBSCAN: both use Euclidean distance,
+    which is dominated by unscaled high-magnitude features.
+
+    Returns:
+        X_scaled (ndarray): Standardised feature matrix
+        scaler (StandardScaler): Fitted scaler (retained for inverse transform if needed)
     """
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    print(f"[INFO] Feature scaling applied. Shape: {X_scaled.shape}")
     return X_scaled, scaler
 
 
-def preprocess(df, label_cols=None):
+def preprocess(df: pd.DataFrame, label_cols: list) -> tuple:
     """
-    Full preprocessing pipeline:
-    1. Handle missing values
-    2. Separate and drop label columns
-    3. Encode categorical features
-    4. Scale numerical features
+    Full preprocessing pipeline.
+
+    Steps:
+        1. Handle missing values
+        2. Separate label columns (returned separately, never used for training)
+        3. Encode categorical features
+        4. Scale all numerical features
 
     Parameters:
-        df         : Raw DataFrame
-        label_cols : List of label/target columns to exclude from features
+        df         : Raw DataFrame (may include labels)
+        label_cols : Columns to exclude from features
 
     Returns:
-        X_scaled      : Scaled feature matrix (numpy array)
+        X_scaled      : Scaled feature matrix (ndarray)
         labels_df     : DataFrame of label columns (for evaluation only)
-        feature_names : List of feature column names
+        feature_names : List of feature column names (matches X_scaled columns)
+        scaler        : Fitted StandardScaler
     """
-    if label_cols is None:
-        label_cols = []
+    df = handle_missing(df)
 
-    # Step 1 – Handle missing values
-    df = handle_missing_values(df)
-
-    # Step 2 – Separate labels (kept for evaluation only, not used in training)
-    labels_df = df[label_cols].copy() if label_cols else pd.DataFrame()
+    # Separate labels — never seen by any model
+    labels_df = df[[c for c in label_cols if c in df.columns]].copy()
     df = df.drop(columns=[c for c in label_cols if c in df.columns], errors="ignore")
 
-    # Step 3 – Encode categorical columns
-    df = encode_categorical(df)
+    # Encode categoricals
+    df, _ = encode_categorical(df)
 
-    # Step 4 – Scale features
     feature_names = df.columns.tolist()
     X_scaled, scaler = scale_features(df.values)
 
-    return X_scaled, labels_df, feature_names
+    return X_scaled, labels_df, feature_names, scaler
