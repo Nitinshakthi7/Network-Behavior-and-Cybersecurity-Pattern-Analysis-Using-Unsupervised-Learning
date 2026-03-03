@@ -1,216 +1,213 @@
-# Network Behavior & Cybersecurity Pattern Analysis Using Unsupervised Learning
+# Behavioral Threat Detection Framework
 
-> **Unsupervised Behavioral Threat Detection Framework**
-> Built for enterprise Security Operations Centers (SOC) that need to detect unknown threats at scale — without relying on labeled attack data or signature rules.
+## Unsupervised Machine Learning for Network Traffic Analysis
 
----
+### Overview
 
-## 🏢 Business Context
+This project implements a behavioral threat detection framework using unsupervised machine learning techniques on the UNSW-NB15 benchmark dataset.
 
-Modern enterprise networks generate hundreds of thousands of sessions daily. Signature-based detection systems fail against zero-day exploits, low-and-slow intrusions, and insider threats — because those threats have no prior signature to match.
+The objective is to:
 
-This framework takes a different approach: **learn what normal looks like, then surface everything that doesn't fit.**
+- Segment network traffic based on behavioral patterns
+- Detect anomalous sessions without relying on attack labels
+- Demonstrate how such a system could assist a Security Operations Center (SOC) in prioritizing investigations
 
-By applying unsupervised behavioral segmentation to raw network telemetry, the framework:
-
-- Partitions all traffic into **10 distinct behavioral profiles** — without using attack labels
-- Automatically flags **rare behavioral segments** for priority investigation
-- Isolates **6,983 sessions (3.98%)** as density anomalies — reducing analyst workload by **96%**
-- Provides a ranked SOC investigation queue, from critical exfiltration candidates down to routine monitoring
-
-The system does not replace analysts. It tells them exactly where to look first.
+**All modeling is performed in a fully unsupervised manner.** Ground-truth labels are used only for post-hoc validation, not for training.
 
 ---
 
-> **University Machine Learning Project — 2nd Year Digital Technology**
-> Dataset: UNSW-NB15 Training Set | Phase: Clustering (Interim)
+### Dataset
+
+- **Dataset:** UNSW-NB15
+- **Source:** Australian Centre for Cybersecurity, UNSW Canberra
+- **Records Used:** 175,341 network flow sessions (Training set)
+- **Features:** 45 raw features
+
+> ⚠️ **Important:**
+> This dataset is a research benchmark generated in a controlled laboratory environment using traffic simulation tools. It is not real corporate production traffic.
+> The framework demonstrates how behavioral segmentation and anomaly detection would operate if deployed in a real enterprise environment.
 
 ---
 
-## 📌 Project Overview
+### Project Objectives
 
-This project applies **unsupervised machine learning** to the UNSW-NB15 network intrusion dataset to identify distinct network traffic behaviour groups and surface anomalous sessions — without using labels during training.
-
-Labels (`label`, `attack_cat`) exist in the dataset but are **strictly excluded from all model training**. They are reserved for post-hoc validation only.
-
----
-
-## ✅ What Has Been Implemented (Current Phase)
-
-### 1. Data Preprocessing (`src/preprocessing.py`)
-
-- Loads UNSW-NB15 CSV dataset
-- Handles missing values (median for numerical, mode for categorical)
-- Separates and excludes label columns from training
-- Label encodes categorical features: `proto`, `service`, `state`
-- Applies StandardScaler — normalises all features to mean=0, std=1
-
-### 2. Feature Engineering (`src/feature_engineering.py`)
-
-Four domain-informed behavioral indicators computed from raw features:
-
-| Feature                    | Formula                             | Security Interpretation                              |
-| -------------------------- | ----------------------------------- | ---------------------------------------------------- |
-| `outbound_dominance_ratio` | `sbytes / (sbytes + dbytes)`        | Near 1.0 = potential exfiltration posture            |
-| `packet_rate`              | `spkts / dur`                       | Very high = scan/flood; regular = C2 beacon          |
-| `bytes_per_packet`         | `sbytes / spkts`                    | Small = scan probe; large = bulk transfer            |
-| `packet_asymmetry`         | `(spkts - dpkts) / (spkts + dpkts)` | +1 = source-dominant (DoS/exfil); −1 = dest-dominant |
-
-Toggle via `FEATURE_ENGINEERING_ENABLED` in `config.py`.
-
-### 3. K-Means Clustering (`src/clustering/kmeans.py`)
-
-- Tests K values from 2 to 10 (configurable in `config.py`)
-- Computes Silhouette Score for each K (on a 10,000-row sample)
-- Automatically selects best K (highest silhouette score)
-- **Result: Best K = 10 | Silhouette Score = 0.3529**
-- Initialisation: `k-means++` with fixed `random_state=42`
-
-### 4. DBSCAN Clustering (`src/clustering/dbscan.py`)
-
-- Parameters: `eps=1.5`, `min_samples=10`
-- Identifies density-based clusters without pre-specifying K
-- Labels outlier sessions as noise (`-1`)
-- **Result: 113 clusters | 6,983 noise points (3.98%)**
-- Parallelised with `n_jobs=-1`
-
-### 5. Evaluation (`src/clustering/evaluation.py`)
-
-- Silhouette Score computation with sampling
-- Cluster size distribution reporting
-- K-Means centroid analysis — top 5 high/low features per cluster
-- DBSCAN noise point reporting
-
-### 6. Visualization (`src/visualization.py`)
-
-Four plots saved to `outputs/plots/`:
-
-| Plot File                  | Description                                                   |
-| -------------------------- | ------------------------------------------------------------- |
-| `silhouette_vs_k.png`      | Silhouette score vs K — best K highlighted                    |
-| `kmeans_cluster_sizes.png` | Bar chart of points per K-Means cluster                       |
-| `dbscan_summary.png`       | DBSCAN summary: clusters, noise, clustered points             |
-| `kmeans_scatter.png`       | 2D scatter of K-Means clusters (sbytes vs dbytes, 10k sample) |
-
-### 7. Reporting (`src/reporting.py`)
-
-- `outputs/reports/summary.txt` — full text summary of clustering results
-- `outputs/reports/cluster_summary.csv` — per-cluster mean feature values
-
-### 8. Central Configuration (`config.py`)
-
-All parameters in one place — K range, DBSCAN eps/min_samples, file paths, sampling sizes, rare cluster threshold.
+- Segment network sessions using behavioral similarity
+- Detect density-based anomalies
+- Discover co-occurring behavioral patterns across attributes
+- Detect globally extreme outliers
+- Combine multiple anomaly signals to create a risk-prioritized output
+- Validate behavioral clusters against known attack categories
 
 ---
 
-## 🔜 Not Yet Implemented (Planned — Future Phases)
+### Methods Used
 
-- [ ] Anomaly Detection — Isolation Forest (`src/anomaly/`)
-- [ ] Association Rule Mining — Apriori / FP-Growth (`src/association/`)
-- [ ] Policy Recommendation Engine (`src/recommendation/`)
-- [ ] Interactive Session Query System (`src/search/`)
-- [ ] Formal evaluation against attack labels (`attack_cat`)
-- [ ] k-distance plot for principled eps selection
+#### 1. Feature Engineering
+
+Selected core session-level features:
+
+- Bytes sent / received
+- Packet counts
+- Duration
+- Protocol / service / state
+
+Engineered behavioral features:
+
+- **Outbound dominance ratio:** Proportion of traffic originating from the source
+- **Packet rate:** Packets per second
+- **Bytes per packet:** Average payload size
+- **Packet asymmetry:** Imbalance between source and destination packets
+
+_These features convert raw traffic into behavioral signals suitable for clustering._
+
+#### 2. K-Means Clustering
+
+- **Purpose:** Behavioral segmentation.
+- K selected using Silhouette Score (K = 10)
+- StandardScaler applied prior to clustering
+- Euclidean distance in standardized feature space
+- Deterministic initialization (k-means++)
+- **Outcome:** 10 behavioral clusters. Majority represent normal traffic. Rare clusters (<2%) flagged for further investigation.
+
+#### 3. DBSCAN
+
+- **Purpose:** Density-based anomaly detection.
+- `eps = 1.5`, `min_samples = 10`
+- ~4% of sessions flagged as density anomalies.
+- Detects locally unusual sessions that do not belong to any dense behavioral region.
+
+#### 4. Association Rule Mining (Apriori)
+
+- **Purpose:** Discovering co-occurring behavioral patterns.
+- Mines frequent itemsets across all discretised traffic features globally.
+- Surfaces rules ranked by _lift_ (where conditional probability exceeds expected random occurrence).
+- Extracts explainable context for SOC analysts (e.g., `proto_tcp AND packet_rate_high → outbound_dominance_ratio_high`).
+
+#### 5. Isolation Forest
+
+- **Purpose:** Global anomaly detection.
+- Tree-based outlier detection with no distance assumptions.
+- ~4% sessions flagged as global anomalies.
+- Detects sessions with extreme feature profiles.
+
+#### 6. Multi-Method Consensus
+
+Sessions flagged by:
+
+- Rare K-Means cluster
+- DBSCAN noise
+- Isolation Forest anomaly
+
+These are ranked highest for investigation. This layered approach reduces false positives compared to single-method detection.
 
 ---
 
-## 📁 Project Structure
+### Validation Strategy
 
-```
-.
-├── config.py                        ← All parameters centralised here
-├── main.py                          ← Entry point — runs full pipeline
-├── data/
-│   └── UNSW_NB15_training-set.csv   ← Dataset (not included in repo)
+Ground-truth attack labels were **not** used during modeling.
+They were used only for:
+
+- Post-hoc cluster validation (Purity and Adjusted Rand Index)
+- Heatmap analysis (Cluster × Attack Category)
+
+**Result:** Certain clusters showed significant enrichment for specific attack types, indicating meaningful behavioral grouping without relying on signatures.
+
+---
+
+### Project Structure
+
+```text
+Network-Behavior-and-Cybersecurity-Pattern-Analysis-Using-Unsupervised-Learning/
+├── main.py                     # Main execution pipeline
+├── config.py                   # Configuration parameters
 ├── src/
-│   ├── __init__.py
-│   ├── preprocessing.py
-│   ├── feature_engineering.py
-│   ├── utils.py
-│   ├── visualization.py
-│   ├── reporting.py
+│   ├── preprocessing.py        # Data loading and cleaning
+│   ├── feature_engineering.py  # Behavioral signal creation
 │   ├── clustering/
-│   │   ├── __init__.py
-│   │   ├── kmeans.py
-│   │   ├── dbscan.py
-│   │   └── evaluation.py
-│   ├── anomaly/                     ← Placeholder (Phase 2)
-│   ├── association/                 ← Placeholder (Phase 3)
-│   ├── recommendation/              ← Placeholder (Phase 4)
-│   └── search/                      ← Placeholder (Phase 4)
+│   │   ├── kmeans.py           # K-Means segmentation
+│   │   ├── dbscan.py           # Density-based outlier detection
+│   │   └── evaluation.py       # Centroid stats and cluster distribution
+│   ├── anomaly/
+│   │   └── isolation_forest.py # Global anomaly scoring
+│   ├── association/
+│   │   ├── apriori.py          # Custom Apriori implementation
+│   │   └── __init__.py
+│   ├── visualization.py        # 6 core plots
+│   ├── reporting.py            # Text and CSV summary generation
+│   ├── evaluation_labels.py    # Post-hoc label validation
+│   └── utils.py
 ├── outputs/
-│   ├── plots/                       ← Generated plot images
-│   ├── models/                      ← Saved models (future)
-│   └── reports/                     ← summary.txt + cluster_summary.csv
-├── requirements.txt
+│   ├── plots/                  # Generated PNG visualisations
+│   ├── reports/                # Generated CSVs and txt reports
+│   └── models/                 # Directory for serialised models (e.g. .pkl)
+├── requirements.txt            # Python dependencies
 └── README.md
 ```
 
 ---
 
-## ⚙️ Setup & Installation
+### How to Run
 
-### 1. Clone the repository
+1. **Install dependencies:**
 
-```bash
-git clone https://github.com/<your-username>/Network-Behavior-and-Cybersecurity-Pattern-Analysis-Using-Unsupervised-Learning.git
-cd Network-Behavior-and-Cybersecurity-Pattern-Analysis-Using-Unsupervised-Learning
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-### 2. Install dependencies
+2. **Place Dataset:**
+   Place the UNSW-NB15 training CSV in the root or `data/` directory (update the path in `preprocessing.py` or your execution script).
 
-```bash
-pip install -r requirements.txt
-```
+3. **Run Pipeline:**
+   ```bash
+   python main.py
+   ```
 
-### 3. Add the dataset
-
-Download the UNSW-NB15 training set from:
-
-> https://research.unsw.edu.au/projects/unsw-nb15-dataset
-
-Place the file at:
-
-```
-data/UNSW_NB15_training-set.csv
-```
-
-### 4. Run the pipeline
-
-```bash
-python main.py
-```
+Outputs will be saved in `outputs/plots/`, `outputs/reports/`, and the terminal console. All generated association rules will be saved to `outputs/reports/association_rules.csv`.
 
 ---
 
-## 📊 Key Results (Clustering Phase)
+### Business Perspective
 
-| Method                       | Result                                      |
-| ---------------------------- | ------------------------------------------- |
-| K-Means Best K               | 10                                          |
-| K-Means Silhouette Score     | 0.3529                                      |
-| Auto-flagged rare clusters   | 3 (Clusters 3, 6, 9)                        |
-| Smallest cluster (Cluster 6) | 82 points — critical exfiltration candidate |
-| DBSCAN Clusters Found        | 113                                         |
-| DBSCAN Noise Points          | 6,983 (3.98% of data)                       |
+**If deployed in an enterprise SOC:**
 
----
+_Without this system:_
 
-## 📦 Dependencies
+- Analysts triage alerts manually
+- Signature-based detection misses unknown/zero-day attacks
+- Investigation priority is unclear
 
-```
-pandas
-numpy
-scikit-learn
-matplotlib
-seaborn
-```
+_With this system:_
+
+- Traffic is segmented behaviorally
+- Anomalies are automatically surfaced via dual-consensus (DBSCAN + Isolation Forest)
+- Sessions are risk-ranked
+- Mean Time to Detect (MTTD) involves prioritizing high-risk behavioral clusters
 
 ---
 
-## ⚠️ Notes
+### Limitations
 
-- The `data/` folder is excluded from version control (see `.gitignore`). Download the dataset separately.
-- All models use `random_state=42` for reproducibility.
-- Labels are never passed to any model. Unsupervised only.
-- DBSCAN uses `n_jobs=-1` to parallelise across all CPU cores.
+- Dataset is simulated benchmark data.
+- Euclidean distance may degrade in high-dimensional space.
+- DBSCAN is sensitive to the `eps` parameter.
+- Model requires periodic retraining to handle concept drift.
+- No precision/recall metrics during inference (due to strictly unsupervised setting).
+
+### Future Work
+
+- HDBSCAN for improved density detection without explicit `eps`.
+- Temporal sequence modeling (e.g., beacon detection, lateral movement tracing).
+- Feedback loop from analyst-confirmed incidents to weight features dynamically.
+- Real-time streaming integration via Kafka/Spark.
+- Evaluation on real-world enterprise NetFlow or PCAP data.
+
+---
+
+### Key Takeaways
+
+- Fully unsupervised behavioral modeling
+- Multi-layer anomaly detection (Isolation Forest + DBSCAN)
+- Explainable pattern discovery (Apriori rules)
+- Interpretable clustering and segmentation
+- Business-relevant risk prioritization
+- Academic integrity maintained (labels strictly withheld from training)
